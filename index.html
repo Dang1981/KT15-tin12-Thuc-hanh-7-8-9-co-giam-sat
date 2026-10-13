@@ -120,7 +120,7 @@
       <div id="infographicBox" class="w-full overflow-x-auto rounded-xl border border-slate-200 bg-slate-50 p-2"></div>
     </section>
 
-    <!-- PHẦN 3: KHUNG SOẠN THẢO CODE & PHÍM TẮT HỖ TRỢ ĐIỆN THOẠI -->
+    <!-- PHẦN 3: KHUNG SOẠN THẢO CODE & PHÍM TẮT -->
     <section class="bg-white p-4 rounded-2xl shadow-sm border border-slate-200 space-y-3">
       <div class="flex justify-between items-center">
         <h2 class="text-xs md:text-sm font-bold text-slate-700 uppercase flex items-center gap-2">
@@ -240,7 +240,27 @@
   </div>
 
   <script>
-    // 1. DANH SÁCH MẶC ĐỊNH ĐẦY ĐỦ 3 LỚP (TRÁNH LỖI TRỐNG 0 HS KHI MỞ TRỰC TIẾP FILE:///)
+    // 1. CẤU HÌNH STUN/TURN XUYÊN TƯỜNG LỬA CHO WEBRTC
+    const rtcConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ]
+      }
+    };
+
+    // 2. DANH SÁCH MẶC ĐỊNH ĐẦY ĐỦ 3 LỚP (TRÁNH LỖI TRỐNG 0 HS KHI MỞ TRỰC TIẾP FILE:///)
     const DEFAULT_STUDENTS = {
       "12A3": [
         { id: "01", name: "Nguyễn Gia Bảo" }, { id: "02", name: "Trần Thị Mai Phương" },
@@ -316,7 +336,7 @@
     let studentPeer = null;
     let teacherConn = null;
 
-    // 2. BỘ ĐỀ THI INFOGRAPHIC SVG TRỰC QUAN
+    // 3. BỘ ĐỀ THI INFOGRAPHIC SVG
     const TOPICS = [
       {
         id: 0,
@@ -359,7 +379,7 @@
     let tabSwitchViolations = 0;
     const MAX_VIOLATIONS = 3;
 
-    // 3. TỰ ĐỘNG NẠP DANH SÁCH FILE EXCEL NẾU CÓ TRÊN SERVER
+    // 4. HIỂN THỊ DANH SÁCH HỌC SINH LÊN COMBOBOX
     function renderStudentOptions(className) {
       const selectStudent = document.getElementById('selectStudent');
       const badge = document.getElementById('studentCountBadge');
@@ -420,7 +440,6 @@
         return;
       }
       renderStudentOptions(currentClass);
-      // Tự động thử nạp file ngoài nền nếu có
       await tryFetchClassFile(currentClass);
     }
 
@@ -431,7 +450,7 @@
       }
     }
 
-    // 4. BẬT CAMERA, KẾT NỐI WEBRTC TỚI TEACHER DASHBOARD & BẮT ĐẦU TÍNH GIỜ
+    // 5. BẬT CAMERA, KẾT NỐI WEBRTC TỚI TEACHER DASHBOARD & TÍNH GIỜ
     async function initCamera() {
       const studentClass = document.getElementById('selectClass').value;
       const selectStudent = document.getElementById('selectStudent');
@@ -499,42 +518,49 @@
     // KẾT NỐI P2P WEBRTC VỀ TEACHER DASHBOARD
     function connectToTeacherDashboard(localStream, studentClass, studentName, studentId) {
       const teacherRoomId = `gv-dang-${studentClass.toLowerCase()}`;
-      try {
-        studentPeer = new Peer();
-        studentPeer.on('open', (id) => {
-          document.getElementById('p2pStatus').innerText = "LIVE P2P";
-          
-          // 1. Kết nối kênh truyền dữ liệu trạng thái
-          teacherConn = studentPeer.connect(teacherRoomId);
-          teacherConn.on('open', () => {
-            teacherConn.send({
-              type: "INIT_STUDENT",
-              name: studentName,
-              className: studentClass,
-              studentId: studentId,
-              violations: tabSwitchViolations,
-              status: "Đang làm bài"
-            });
-          });
-
-          // Nhận thông điệp nhắc nhở nếu giáo viên gửi từ Dashboard
-          teacherConn.on('data', (data) => {
-            if (data && data.type === "REMOTE_WARNING") {
-              alert(`[LỜI NHẮC TỪ THẦY]: ${data.message}`);
-            }
-          });
-
-          // 2. Truyền luồng Video Camera của học sinh về máy giáo viên
-          studentPeer.call(teacherRoomId, localStream);
-        });
-
-        studentPeer.on('error', (err) => {
-          console.warn("PeerJS thông báo:", err);
-          document.getElementById('p2pStatus').innerText = "OFF P2P";
-        });
-      } catch (e) {
-        console.error("Không thể khởi tạo WebRTC:", e);
+      
+      if (studentPeer) {
+        try { studentPeer.destroy(); } catch(e){}
       }
+
+      studentPeer = new Peer(rtcConfig);
+
+      studentPeer.on('open', (id) => {
+        document.getElementById('p2pStatus').innerText = "LIVE P2P";
+        
+        teacherConn = studentPeer.connect(teacherRoomId);
+        teacherConn.on('open', () => {
+          teacherConn.send({
+            type: "INIT_STUDENT",
+            name: studentName,
+            className: studentClass,
+            studentId: studentId,
+            violations: tabSwitchViolations,
+            status: "Đang làm bài"
+          });
+
+          // Sau khi kênh thông, gửi cuộc gọi video kèm stream
+          setTimeout(() => {
+            studentPeer.call(teacherRoomId, localStream);
+          }, 500);
+        });
+
+        teacherConn.on('data', (data) => {
+          if (data && data.type === "REMOTE_WARNING") {
+            alert(`[LỜI NHẮC TỪ THẦY]: ${data.message}`);
+          }
+        });
+      });
+
+      studentPeer.on('error', (err) => {
+        console.warn("Lỗi P2P học sinh:", err);
+        document.getElementById('p2pStatus').innerText = "THỬ LẠI...";
+        setTimeout(() => {
+          if (isTestStarted && !isTestFinished) {
+            connectToTeacherDashboard(localStream, studentClass, studentName, studentId);
+          }
+        }, 2500);
+      });
     }
 
     function startTimer() {
@@ -591,13 +617,12 @@
       iframeDoc.close();
     }
 
-    // 5. GIÁM SÁT VI PHẠM RỜI TAB
+    // 6. GIÁM SÁT VI PHẠM RỜI TAB
     function triggerViolation(reason = "Rời ứng dụng hoặc chuyển trang khác") {
       if (!isTestStarted || isTestFinished) return;
       tabSwitchViolations++;
       document.getElementById('violationCount').innerText = `${tabSwitchViolations}/${MAX_VIOLATIONS}`;
 
-      // Báo ngay về Teacher Dashboard
       if (teacherConn && teacherConn.open) {
         teacherConn.send({
           type: "VIOLATION_UPDATE",
@@ -640,7 +665,7 @@
     codeEditor.addEventListener('cut', (e) => e.preventDefault());
     codeEditor.addEventListener('contextmenu', (e) => e.preventDefault());
 
-    // 6. CHẤM ĐIỂM TỰ ĐỘNG
+    // 7. CHẤM ĐIỂM TỰ ĐỘNG
     function gradeCurrentCode() {
       const studentClass = document.getElementById('selectClass').value;
       const studentName = document.getElementById('selectStudent').value;
@@ -703,7 +728,6 @@
       document.getElementById('resTopicTitle').innerText = topic.name;
       document.getElementById('resSubmitTime').innerText = new Date().toLocaleTimeString('vi-VN');
 
-      // Gửi điểm số hoàn thành về Dashboard giáo viên
       if (teacherConn && teacherConn.open) {
         teacherConn.send({
           type: "SUBMIT_FINAL",

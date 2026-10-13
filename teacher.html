@@ -56,11 +56,8 @@
 
   <!-- LƯỚI GIÁM SÁT TẤT CẢ CAMERA CỦA HỌC SINH (GRID VIEW) -->
   <main>
-    <div id="videoGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3">
-      <!-- Các thẻ học sinh kết nối sẽ tự động render tại đây -->
-    </div>
+    <div id="videoGrid" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-3"></div>
 
-    <!-- Màn hình chờ khi chưa có học sinh nào kết nối -->
     <div id="emptyNotice" class="text-center py-20 border-2 border-dashed border-slate-800 rounded-3xl p-8 space-y-3">
       <svg class="w-12 h-12 text-slate-600 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
       <h3 class="text-base font-bold text-slate-400">Đang lắng nghe kết nối từ học sinh...</h3>
@@ -80,7 +77,7 @@
       </div>
 
       <div class="relative rounded-2xl overflow-hidden bg-black aspect-video flex items-center justify-center border border-slate-700">
-        <video id="focusVideoElem" autoplay playsinline class="w-full h-full object-contain"></video>
+        <video id="focusVideoElem" autoplay playsinline muted class="w-full h-full object-contain"></video>
       </div>
 
       <div class="flex items-center gap-2 pt-2">
@@ -91,58 +88,74 @@
   </div>
 
   <script>
+    // CẤU HÌNH STUN/TURN XUYÊN TƯỜNG LỬA CHO MÁY CHỦ GIÁO VIÊN
+    const rtcConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ]
+      }
+    };
+
     let teacherPeer = null;
     let currentRoomClass = "12a9";
-    let activeStudents = {}; // Lưu trữ { peerId: { name, className, studentId, violations, status, call, conn, stream } }
+    let activeStudents = {};
     let focusedPeerId = null;
 
-    // 1. KHỞI TẠO MÁY CHỦ PEERJS VỚI ID PHÒNG CỐ ĐỊNH
     function initTeacherHost(className) {
       if (teacherPeer) {
-        teacherPeer.destroy();
+        try { teacherPeer.destroy(); } catch(e){}
       }
 
       currentRoomClass = className.toLowerCase();
       const hostRoomId = `gv-dang-${currentRoomClass}`;
-      document.getElementById('p2pHostStatus').innerText = `Kết nối: ${hostRoomId}...`;
+      document.getElementById('p2pHostStatus').innerText = `Đang kết nối: ${hostRoomId}...`;
 
       activeStudents = {};
       document.getElementById('videoGrid').innerHTML = "";
       document.getElementById('studentCountLive').innerText = "0";
       document.getElementById('emptyNotice').classList.remove('hidden');
 
-      teacherPeer = new Peer(hostRoomId);
+      teacherPeer = new Peer(hostRoomId, rtcConfig);
 
       teacherPeer.on('open', (id) => {
         document.getElementById('p2pHostStatus').innerText = `SẴN SÀNG (${id})`;
         document.getElementById('p2pHostStatus').className = "font-mono font-bold text-emerald-400";
       });
 
-      // LẮNG NGHE KÊNH DỮ LIỆU TỪ HỌC SINH
       teacherPeer.on('connection', (conn) => {
         conn.on('data', (data) => {
           handleIncomingStudentData(conn.peer, data, conn);
         });
       });
 
-      // LẮNG NGHE LUỒNG VIDEO CAMERA GỌI ĐẾN TỪ HỌC SINH
       teacherPeer.on('call', (call) => {
-        call.answer(); // Chấp nhận nhận luồng video
+        call.answer(); // Trả lời cuộc gọi để nhận luồng video
         call.on('stream', (remoteStream) => {
           attachStudentStream(call.peer, remoteStream, call);
         });
       });
 
       teacherPeer.on('error', (err) => {
-        console.warn("Lỗi Peer:", err);
+        console.warn("Lỗi Teacher Peer:", err);
         if (err.type === "unavailable-id") {
-          document.getElementById('p2pHostStatus').innerText = "Trùng phòng (Đang có tab khác mở)";
+          document.getElementById('p2pHostStatus').innerText = "Trùng ID phòng (Hãy tắt các tab teacher khác)";
           document.getElementById('p2pHostStatus').className = "font-mono font-bold text-rose-400";
         }
       });
     }
 
-    // 2. XỬ LÝ DỮ LIỆU HỌC SINH GỬI VỀ
     function handleIncomingStudentData(peerId, data, conn) {
       if (!activeStudents[peerId]) {
         activeStudents[peerId] = {
@@ -165,7 +178,6 @@
       updateTotalCount();
     }
 
-    // 3. GẮN LUỒNG VIDEO VÀO GIAO DIỆN LƯỚI
     function attachStudentStream(peerId, stream, call) {
       if (!activeStudents[peerId]) {
         activeStudents[peerId] = {
@@ -184,7 +196,6 @@
       updateTotalCount();
     }
 
-    // 4. RENDER VÀ CẬP NHẬT THẺ VIDEO HỌC SINH
     function renderStudentCard(peerId) {
       document.getElementById('emptyNotice').classList.add('hidden');
       const grid = document.getElementById('videoGrid');
@@ -193,7 +204,6 @@
       if (!card) {
         card = document.createElement('div');
         card.id = `card-${peerId}`;
-        card.className = "bg-slate-800 rounded-2xl overflow-hidden border-2 border-slate-700 shadow-lg relative flex flex-col transition hover:border-indigo-500 cursor-pointer";
         card.onclick = () => openFocusModal(peerId);
         grid.appendChild(card);
       }
@@ -205,6 +215,7 @@
         isViolating ? 'border-rose-500 shadow-rose-950/40' : 'border-slate-700 hover:border-indigo-500'
       }`;
 
+      // Thuộc tính playsinline, autoplay, muted giúp chống cơ chế chặn Autoplay của trình duyệt
       card.innerHTML = `
         <div class="relative bg-black aspect-video flex items-center justify-center">
           <video id="video-${peerId}" autoplay playsinline muted class="w-full h-full object-cover"></video>
@@ -228,10 +239,10 @@
         </div>
       `;
 
-      // Gắn MediaStream vào video
       const videoElem = document.getElementById(`video-${peerId}`);
       if (videoElem && info.stream) {
         videoElem.srcObject = info.stream;
+        videoElem.play().catch(e => console.log("Lỗi autoplay:", e));
       }
     }
 
@@ -251,7 +262,6 @@
       }
     }
 
-    // 5. CHỨC NĂNG PHÓNG TO VÀ GỬI LỜI NHẮC
     function openFocusModal(peerId) {
       focusedPeerId = peerId;
       const info = activeStudents[peerId];
@@ -263,6 +273,7 @@
       const focusVideo = document.getElementById('focusVideoElem');
       if (info.stream) {
         focusVideo.srcObject = info.stream;
+        focusVideo.play().catch(e => console.log(e));
       }
 
       document.getElementById('focusModal').classList.remove('hidden');
@@ -300,7 +311,6 @@
       initTeacherHost(val);
     }
 
-    // 6. XUẤT FILE BÁO CÁO PHIÊN THI RA EXCEL
     function exportTeacherSessionExcel() {
       const rows = [];
       Object.keys(activeStudents).forEach(peerId => {
@@ -326,7 +336,6 @@
       XLSX.writeFile(wb, `Bao_Cao_Giam_Sat_${currentRoomClass.toUpperCase()}_${new Date().toISOString().slice(0,10)}.xlsx`);
     }
 
-    // Khởi tạo phòng giám sát mặc định cho lớp 12A9
     window.onload = () => {
       initTeacherHost("12a9");
     };
