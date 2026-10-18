@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bảng Giám Sát Thi Trực Tuyến - GV: Nguyễn Hoàng Hải Đăng</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Thư viện SheetJS xuất báo cáo Excel -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <!-- Thư viện WebRTC PeerJS -->
+  <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+  <style>
+    .rec-pulse { animation: pulse 1.5s infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+    /* Tối ưu render phần cứng trình duyệt khi decode nhiều thẻ video */
+    video {
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
+  </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans p-2 md:p-4">
+
+  <!-- THANH ĐIỀU HÀNH TRÊN CÙNG (GỌN GÀNG, TỐI ƯU KHÔNG GIAN) -->
+  <header class="bg-slate-900/95 backdrop-blur border border-slate-800 px-3 py-2.5 rounded-xl shadow-lg flex flex-wrap justify-between items-center gap-2 mb-3 sticky top-1 z-40">
+    <div class="flex items-center gap-2.5">
+      <span class="w-2.5 h-2.5 bg-red-500 rounded-full rec-pulse"></span>
+      <div>
+        <h1 class="text-xs md:text-sm font-black text-white uppercase tracking-tight flex items-center gap-1.5">
+          GIÁM SÁT THI TẬP TRUNG (SERVERLESS P2P) • <span class="text-indigo-400">GV: NGUYỄN HOÀNG HẢI ĐĂNG</span>
+        </h1>
+        <p class="text-[10px] text-slate-400 font-mono">Tối ưu 46 luồng song song: QVGA 320x240 @ 12 FPS</p>
+      </div>
+    </div>
+
+    <!-- KHU VỰC ĐIỀU KHIỂN & LỰA CHỌN LỚP -->
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="flex items-center gap-1.5 bg-slate-950 px-2 py-1 rounded-lg border border-slate-800">
+        <label class="text-[10px] font-bold text-slate-400 uppercase">Lớp:</label>
+        <select id="teacherClassSelect" onchange="switchMonitoringRoom(this.value)" class="bg-slate-800 text-indigo-400 font-bold text-xs rounded px-1.5 py-0.5 border border-slate-700 focus:outline-none">
+          <option value="12a3">12A3</option>
+          <option value="12a9" selected>12A9</option>
+          <option value="12a14">12A14</option>
+        </select>
+      </div>
+
+      <div class="bg-slate-950 px-2 py-1 rounded-lg border border-slate-800 flex items-center gap-1 text-[10px]">
+        <span class="text-slate-400">Trạng thái:</span>
+        <span id="p2pHostStatus" class="font-mono font-bold text-amber-400">Đang khởi tạo...</span>
+      </div>
+
+      <div class="bg-indigo-950/80 border border-indigo-700 px-2 py-1 rounded-lg text-[11px] font-bold text-indigo-300">
+        Sĩ số: <span id="studentCountLive" class="text-emerald-400 font-mono font-bold text-xs">0</span>/46
+      </div>
+
+      <button onclick="exportTeacherSessionExcel()" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-[11px] px-2.5 py-1 rounded-lg transition shadow flex items-center gap-1">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+        Xuất Excel
+      </button>
+    </div>
+  </header>
+
+  <!-- LƯỚI GIÁM SÁT 46 HỌC SINH (CHIA LƯỚI 6 - 10 CỘT, KHUNG COMPACT SIÊU GỌN GÀNG) -->
+  <main>
+    <div id="videoGrid" class="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 xl:grid-cols-10 gap-1.5 md:gap-2"></div>
+
+    <div id="emptyNotice" class="text-center py-16 border-2 border-dashed border-slate-800 rounded-2xl p-6 space-y-2">
+      <svg class="w-10 h-10 text-slate-600 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/></svg>
+      <h3 class="text-sm font-bold text-slate-400">Đang sẵn sàng kết nối 46 học sinh...</h3>
+      <p class="text-[11px] text-slate-500 max-w-sm mx-auto">Học sinh bấm <strong class="text-indigo-400">"Bật Camera Giám Sát"</strong> sẽ tự động nhận diện theo STT và sắp xếp vào bảng điều khiển.</p>
+    </div>
+  </main>
+
+  <!-- MODAL PHÓNG TO CAMERA TỪNG HỌC SINH KHI CẦN SOI CHI TIẾT -->
+  <div id="focusModal" class="hidden fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-3">
+    <div class="bg-slate-900 border border-slate-700 rounded-2xl max-w-xl w-full p-4 space-y-3 shadow-2xl">
+      <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+        <div>
+          <h3 id="focusStudentName" class="text-sm font-black text-white">Tên Học Sinh</h3>
+          <p id="focusStudentMeta" class="text-[11px] text-slate-400">Lớp: -- | Vi phạm: 0</p>
+        </div>
+        <button onclick="closeFocusModal()" class="text-slate-400 hover:text-white text-lg font-bold px-2">✕</button>
+      </div>
+
+      <div class="relative rounded-xl overflow-hidden bg-black aspect-video flex items-center justify-center border border-slate-800">
+        <video id="focusVideoElem" autoplay playsinline muted class="w-full h-full object-contain"></video>
+      </div>
+
+      <div class="flex items-center gap-1.5 pt-1">
+        <input type="text" id="warningMessageInput" placeholder="Gửi lời nhắc riêng đến học sinh này..." class="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-white focus:outline-none focus:ring-1 focus:ring-indigo-500">
+        <button onclick="sendWarningToFocusedStudent()" class="bg-rose-600 hover:bg-rose-700 text-white font-bold text-xs px-3 py-1.5 rounded-lg transition">Gửi Lời Nhắc</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // CẤU HÌNH STUN/TURN P2P
+    const rtcConfig = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:stun1.l.google.com:19302' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ]
+      }
+    };
+
+    let teacherPeer = null;
+    let currentRoomClass = "12a9";
+    let activeStudents = {};
+    let focusedPeerId = null;
+
+    function initTeacherHost(className) {
+      if (teacherPeer) {
+        try { teacherPeer.destroy(); } catch(e){}
+      }
+
+      currentRoomClass = className.toLowerCase();
+      const hostRoomId = `gv-dang-${currentRoomClass}`;
+      document.getElementById('p2pHostStatus').innerText = `Kết nối: ${hostRoomId}...`;
+
+      activeStudents = {};
+      document.getElementById('videoGrid').innerHTML = "";
+      document.getElementById('studentCountLive').innerText = "0";
+      document.getElementById('emptyNotice').classList.remove('hidden');
+
+      teacherPeer = new Peer(hostRoomId, rtcConfig);
+
+      teacherPeer.on('open', (id) => {
+        document.getElementById('p2pHostStatus').innerText = `SẴN SÀNG (${id})`;
+        document.getElementById('p2pHostStatus').className = "font-mono font-bold text-emerald-400";
+      });
+
+      teacherPeer.on('connection', (conn) => {
+        conn.on('open', () => {
+          // Gửi thông báo ép cấu hình camera máy học sinh xuống QVGA @ 12 FPS
+          conn.send({
+            type: "CONFIG_STREAM",
+            constraints: {
+              width: 320,
+              height: 240,
+              frameRate: 12
+            }
+          });
+        });
+
+        conn.on('data', (data) => {
+          handleIncomingStudentData(conn.peer, data, conn);
+        });
+      });
+
+      teacherPeer.on('call', (call) => {
+        call.answer(); // Tiếp nhận cuộc gọi video
+        call.on('stream', (remoteStream) => {
+          attachStudentStream(call.peer, remoteStream, call);
+        });
+      });
+
+      teacherPeer.on('error', (err) => {
+        console.warn("Lỗi Teacher Peer:", err);
+        if (err.type === "unavailable-id") {
+          document.getElementById('p2pHostStatus').innerText = "Trùng ID phòng (Đóng tab cũ nếu có)";
+          document.getElementById('p2pHostStatus').className = "font-mono font-bold text-rose-400";
+        }
+      });
+    }
+
+    function handleIncomingStudentData(peerId, data, conn) {
+      if (!activeStudents[peerId]) {
+        activeStudents[peerId] = {
+          name: data.name || "Học sinh",
+          className: data.className || currentRoomClass.toUpperCase(),
+          studentId: data.studentId || "--",
+          violations: data.violations || 0,
+          status: data.status || "Đang thi",
+          conn: conn,
+          score: "--"
+        };
+      } else {
+        activeStudents[peerId].conn = conn;
+        if (data.name) activeStudents[peerId].name = data.name;
+        if (data.studentId) activeStudents[peerId].studentId = data.studentId;
+        if (data.violations !== undefined) activeStudents[peerId].violations = data.violations;
+        if (data.status) activeStudents[peerId].status = data.status;
+        if (data.score) activeStudents[peerId].score = data.score;
+      }
+
+      updateStudentCardUI(peerId);
+      updateTotalCount();
+    }
+
+    function attachStudentStream(peerId, stream, call) {
+      if (!activeStudents[peerId]) {
+        activeStudents[peerId] = {
+          name: "Học sinh",
+          className: currentRoomClass.toUpperCase(),
+          studentId: "--",
+          violations: 0,
+          status: "Đang thi",
+          score: "--"
+        };
+      }
+      activeStudents[peerId].stream = stream;
+      activeStudents[peerId].call = call;
+
+      renderStudentCard(peerId);
+      updateTotalCount();
+    }
+
+    function renderStudentCard(peerId) {
+      document.getElementById('emptyNotice').classList.add('hidden');
+      const grid = document.getElementById('videoGrid');
+
+      let card = document.getElementById(`card-${peerId}`);
+      if (!card) {
+        card = document.createElement('div');
+        card.id = `card-${peerId}`;
+        card.onclick = () => openFocusModal(peerId);
+        grid.appendChild(card);
+      }
+
+      const info = activeStudents[peerId];
+      const isViolating = info.violations > 0;
+
+      // Card nhỏ gọn tối ưu cho hiển thị 46 học sinh trên 1 màn hình
+      card.className = `bg-slate-900 rounded-lg overflow-hidden border transition cursor-pointer flex flex-col shadow ${
+        isViolating ? 'border-rose-500 ring-1 ring-rose-500' : 'border-slate-800 hover:border-indigo-400'
+      }`;
+
+      card.innerHTML = `
+        <div class="relative bg-black aspect-[4/3] flex items-center justify-center overflow-hidden">
+          <video id="video-${peerId}" autoplay playsinline muted class="w-full h-full object-cover"></video>
+          
+          <!-- Huy hiệu cảnh báo rời tab -->
+          <div class="absolute top-1 left-1 px-1 py-0.2 rounded text-[9px] font-mono font-bold backdrop-blur ${
+            isViolating ? 'bg-rose-950/90 text-rose-300 border border-rose-600' : 'bg-black/60 text-emerald-400'
+          }">
+            ${isViolating ? `RỜI: ${info.violations}` : 'OK'}
+          </div>
+
+          <!-- Huy hiệu STT / Điểm số -->
+          <div class="absolute bottom-0.5 right-1 px-1 rounded text-[9px] bg-slate-950/80 text-slate-300 font-mono">
+            ${info.score !== "--" ? `Đ: ${info.score}` : (info.studentId ? `STT ${info.studentId}` : '')}
+          </div>
+        </div>
+
+        <!-- Thanh thông tin chân card siêu ngắn gọn -->
+        <div class="p-1 px-1.5 flex justify-between items-center text-[10px] bg-slate-900 border-t border-slate-800">
+          <div class="truncate pr-1">
+            <p class="font-bold text-slate-200 truncate leading-tight">${info.name}</p>
+          </div>
+          <button onclick="event.stopPropagation(); quickWarning('${peerId}')" title="Nhắc nhở học sinh" class="text-[9px] bg-rose-950 hover:bg-rose-900 text-rose-300 px-1 py-0.5 rounded border border-rose-800">
+            Nhắc
+          </button>
+        </div>
+      `;
+
+      const videoElem = document.getElementById(`video-${peerId}`);
+      if (videoElem && info.stream) {
+        videoElem.srcObject = info.stream;
+        videoElem.play().catch(e => console.log("Lỗi autoplay:", e));
+      }
+    }
+
+    function updateStudentCardUI(peerId) {
+      if (document.getElementById(`card-${peerId}`)) {
+        renderStudentCard(peerId);
+      }
+    }
+
+    function updateTotalCount() {
+      const count = Object.keys(activeStudents).length;
+      document.getElementById('studentCountLive').innerText = count;
+      if (count === 0) {
+        document.getElementById('emptyNotice').classList.remove('hidden');
+      } else {
+        document.getElementById('emptyNotice').classList.add('hidden');
+      }
+    }
+
+    function openFocusModal(peerId) {
+      focusedPeerId = peerId;
+      const info = activeStudents[peerId];
+      if (!info) return;
+
+      document.getElementById('focusStudentName').innerText = `${info.name} (STT: ${info.studentId})`;
+      document.getElementById('focusStudentMeta').innerText = `Lớp: ${info.className} | Rời màn hình: ${info.violations} lần | Trạng thái: ${info.status}`;
+      
+      const focusVideo = document.getElementById('focusVideoElem');
+      if (info.stream) {
+        focusVideo.srcObject = info.stream;
+        focusVideo.play().catch(e => console.log(e));
+      }
+
+      document.getElementById('focusModal').classList.remove('hidden');
+    }
+
+    function closeFocusModal() {
+      document.getElementById('focusModal').classList.add('hidden');
+      focusedPeerId = null;
+    }
+
+    function sendWarningToFocusedStudent() {
+      const msg = document.getElementById('warningMessageInput').value.trim();
+      if (!msg || !focusedPeerId) return;
+
+      const student = activeStudents[focusedPeerId];
+      if (student && student.conn) {
+        student.conn.send({ type: "REMOTE_WARNING", message: msg });
+        alert(`Đã gửi lời nhắc đến học sinh: ${student.name}!`);
+        document.getElementById('warningMessageInput').value = "";
+      }
+    }
+
+    function quickWarning(peerId) {
+      const student = activeStudents[peerId];
+      if (student && student.conn) {
+        student.conn.send({
+          type: "REMOTE_WARNING",
+          message: "Thầy nhắc em tập trung vào màn hình làm bài, không nhìn quanh hoặc mở tab khác!"
+        });
+        alert(`Đã gửi cảnh báo đến em ${student.name}!`);
+      }
+    }
+
+    function switchMonitoringRoom(val) {
+      initTeacherHost(val);
+    }
+
+    function exportTeacherSessionExcel() {
+      const rows = [];
+      Object.keys(activeStudents).forEach(peerId => {
+        const s = activeStudents[peerId];
+        rows.push({
+          "Lớp": s.className,
+          "STT": s.studentId,
+          "Họ và Tên": s.name,
+          "Số Lần Rời Tab/App": s.violations,
+          "Trạng Thái": s.status,
+          "Điểm Số": s.score
+        });
+      });
+
+      if (rows.length === 0) {
+        alert("Chưa có dữ liệu học sinh!");
+        return;
+      }
+
+      const ws = XLSX.utils.json_to_sheet(rows);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "BaoCaoGiamSat");
+      XLSX.writeFile(wb, `Bao_Cao_Giam_Sat_${currentRoomClass.toUpperCase()}_${new Date().toISOString().slice(0,10)}.xlsx`);
+    }
+
+    window.onload = () => {
+      initTeacherHost("12a9");
+    };
+  </script>
+</body>
+</html>
